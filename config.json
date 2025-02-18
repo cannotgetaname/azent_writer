@@ -1,0 +1,7 @@
+{
+    "version": "1.0.0",
+    "model": "paraphrase-multilingual-MiniLM-L12-v2",
+    "knowledge_base_dir": "knowledge_base",
+    "max_chunk_size": 512,
+    "supported_formats": [".txt"]
+}
