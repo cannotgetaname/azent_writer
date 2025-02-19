@@ -22,10 +22,10 @@ class DocumentProcessor:
             self.config = self._load_config()
             if not self.config:
                 raise ValueError("无法加载配置文件")
-                
+            
             # 设置知识库目录
             self.knowledge_base_dir = os.path.join(os.path.dirname(__file__), 
-                                                 self.config.get('knowledge_base_dir', 'knowledge_base'))
+                                               self.config.get('knowledge_base_dir', 'knowledge_base'))
             os.makedirs(self.knowledge_base_dir, exist_ok=True)
             
             # 初始化模型
@@ -35,7 +35,7 @@ class DocumentProcessor:
                 self._model = SentenceTransformer(model_name)
             except Exception as e:
                 raise RuntimeError(f"模型加载失败: {str(e)}")
-                
+            
             # 加载知识库
             self._load_knowledge_base()
             
@@ -50,6 +50,43 @@ class DocumentProcessor:
             print(f"初始化文档处理器失败: {str(e)}")
             raise
 
+    def remove_vector_data(self, file_path: str) -> bool:
+        """删除文档的向量数据（保留原始文件）"""
+        try:
+            normalized_path = os.path.normpath(file_path)
+            if normalized_path not in self.knowledge_base:
+                print(f"文档不存在: {normalized_path}")
+                return False
+            
+            # 获取文档ID
+            doc_id = self.knowledge_base[normalized_path]["doc_id"]
+            safe_filename = self._get_safe_filename(doc_id)
+            
+            # 删除向量文件
+            vector_file = os.path.join(self.knowledge_base_dir, f"{safe_filename}_vectors.npz")
+            if os.path.exists(vector_file):
+                os.remove(vector_file)
+            
+            # 删除索引文件
+            index_file = os.path.join(self.knowledge_base_dir, f"{safe_filename}_index.faiss")
+            if os.path.exists(index_file):
+                os.remove(index_file)
+            
+            # 从内存中删除
+            if doc_id in self.vector_store:
+                del self.vector_store[doc_id]
+            
+            # 从知识库中完全删除该条目
+            del self.knowledge_base[normalized_path]
+            self._save_knowledge_base()
+            
+            print(f"已删除文档及其向量数据: {normalized_path}")
+            return True
+            
+        except Exception as e:
+            print(f"删除向量数据失败: {str(e)}")
+            return False
+
     def _load_config(self) -> dict:
         """加载配置文件"""
         try:
@@ -57,7 +94,7 @@ class DocumentProcessor:
             if not os.path.exists(config_path):
                 print(f"配置文件不存在: {config_path}")
                 return {}
-                
+            
             with open(config_path, 'r', encoding='utf-8') as f:
                 config = json.load(f)
                 print(f"成功加载配置文件: {config_path}")
@@ -71,6 +108,7 @@ class DocumentProcessor:
             return {}
 
     def _process_single_document(self, file_path: str) -> bool:
+        """处理单个文档"""
         try:
             normalized_path = os.path.normpath(file_path)
             doc_id = hashlib.md5(normalized_path.encode('utf-8')).hexdigest()
@@ -79,22 +117,22 @@ class DocumentProcessor:
             content = self._read_file_with_encoding(normalized_path)
             if content is None:
                 return False
-                
+            
             # 文本分块处理
             texts = self._split_text(content)
             if not texts:
                 print(f"文件内容分块失败: {normalized_path}")
                 return False
-                
+            
             # 生成向量
             embeddings = self._generate_embeddings(texts, normalized_path)
             if embeddings is None:
                 return False
-                
+            
             # 保存处理结果
             if not self._save_document_data(doc_id, normalized_path, texts, embeddings):
                 return False
-                
+            
             return True
             
         except Exception as e:
@@ -126,7 +164,7 @@ class DocumentProcessor:
         paragraphs = re.split(r'\n{2,}|\r\n{2,}', content.strip())
         if not paragraphs:
             return []
-            
+        
         texts = []
         current_chunk = []
         current_size = 0
@@ -135,32 +173,32 @@ class DocumentProcessor:
             para = para.strip()
             if not para:
                 continue
-                
+            
             # 分句处理长段落
             if len(para) > max_chunk_size:
                 sentences = re.split(r'([。！？.!?])', para)
                 sentences = [''.join(i) for i in zip(sentences[::2], sentences[1::2] + [''])]
             else:
                 sentences = [para]
-                
+            
             for sentence in sentences:
                 sentence = sentence.strip()
                 if not sentence:
                     continue
-                    
+                
                 # 检查是否需要开始新的块
                 if current_size + len(sentence) > max_chunk_size and current_chunk:
                     texts.append('\n'.join(current_chunk))
                     current_chunk = []
                     current_size = 0
-                    
+                
                 current_chunk.append(sentence)
                 current_size += len(sentence)
-                
+        
         # 处理剩余内容
         if current_chunk and current_size >= min_chunk_size:
             texts.append('\n'.join(current_chunk))
-            
+        
         return texts
 
     def _generate_embeddings(self, texts: List[str], file_path: str) -> Optional[np.ndarray]:
@@ -172,7 +210,7 @@ class DocumentProcessor:
             if embeddings.shape[0] != len(texts):
                 print(f"嵌入向量生成异常: 预期 {len(texts)} 个向量，实际生成 {embeddings.shape[0]} 个")
                 return None
-                
+            
             print(f"成功生成 {embeddings.shape[0]} 个嵌入向量，维度 {embeddings.shape[1]}")
             return embeddings
             
@@ -187,7 +225,7 @@ class DocumentProcessor:
             index = faiss.IndexFlatL2(self._model.get_sentence_embedding_dimension())
             if embeddings.shape[0] > 0:
                 index.add(embeddings)
-                
+            
             # 保存向量数据
             safe_filename = self._get_safe_filename(doc_id)
             vector_file = os.path.join(self.knowledge_base_dir, f"{safe_filename}_vectors.npz")
@@ -198,8 +236,12 @@ class DocumentProcessor:
             faiss.write_index(index, index_file)
             
             # 更新知识库状态
-            self.knowledge_base[file_path]["processed"] = True
-            self.knowledge_base[file_path]["preview"] = texts[0] if texts else ""
+            self.knowledge_base[file_path] = {
+                "doc_id": doc_id,
+                "processed": True,
+                "preview": texts[0] if texts else "",
+                "timestamp": time.time()
+            }
             self._save_knowledge_base()
             
             # 更新内存存储
@@ -216,25 +258,25 @@ class DocumentProcessor:
             return False
 
     def add_document(self, file_path: str) -> bool:
+        """添加文档到知识库"""
         normalized_path = os.path.normpath(file_path)
         
         if not os.path.exists(normalized_path):
             print(f"文件不存在: {normalized_path}")
             return False
-
-        try:
-            doc_id = hashlib.md5(normalized_path.encode('utf-8')).hexdigest()
-            self.knowledge_base[normalized_path] = {
-                "doc_id": doc_id,
-                "timestamp": os.path.getmtime(file_path),
-                "processed": False,
-                "preview": "点击处理按钮生成预览"
-            }
-            self._save_knowledge_base()
-            return True
-        except Exception as e:
-            print(f"添加文档失败: {str(e)}")
-            return False
+            
+        # 生成文档ID
+        doc_id = hashlib.md5(normalized_path.encode('utf-8')).hexdigest()
+        
+        # 添加到知识库
+        self.knowledge_base[normalized_path] = {
+            "doc_id": doc_id,
+            "processed": False,
+            "timestamp": time.time()
+        }
+        self._save_knowledge_base()
+        
+        return True
 
     def _load_knowledge_base(self):
         """从本地文件加载知识库"""
@@ -292,37 +334,22 @@ class DocumentProcessor:
             print(f"保存知识库时出错: {str(e)}")
 
     def _get_safe_filename(self, doc_id: str) -> str:
-        """生成安全的文件名
-        
-        Args:
-            doc_id: 文档ID
-            
-        Returns:
-            str: 安全的文件名
-        """
+        """生成安全的文件名"""
         return re.sub(r'[<>:"/\\|?*]', '_', doc_id)
 
     def search_similar(self, query: str, top_k: int = None) -> List[Dict[str, any]]:
-        """搜索相似内容
-        
-        Args:
-            query: 查询文本
-            top_k: 返回结果数量，默认使用配置文件中的设置
-            
-        Returns:
-            List[Dict]: 搜索结果列表
-        """
+        """搜索相似内容"""
         try:
             if not self.vector_store:
                 raise RuntimeError("知识库为空，请先添加并处理文档")
-                
+            
             if top_k is None:
                 top_k = self.config.get('search_settings', {}).get('top_k', 5)
-                
+            
             results = []
             min_score = self.config.get('search_settings', {}).get('min_score', 0.01)
             seen_texts = set()  # 用于去重
-                
+            
             # 生成查询向量
             query_vector = self._model.encode([query], convert_to_numpy=True)
             print(f"查询向量维度: {query_vector.shape}")
@@ -343,7 +370,7 @@ class DocumentProcessor:
                 
                 if local_top_k == 0:
                     continue
-                    
+                
                 # 在当前文档中搜索
                 D, I = doc_index.search(query_vector, local_top_k)
                 
@@ -374,15 +401,7 @@ class DocumentProcessor:
             raise RuntimeError(f"搜索失败: {str(e)}")
 
     def process_documents(self, file_paths: list, progress_callback: Callable[[float, str], None] = None) -> List[bool]:
-        """处理多个文档
-        
-        Args:
-            file_paths: 文档路径列表
-            progress_callback: 进度回调函数
-            
-        Returns:
-            List[bool]: 处理结果列表
-        """
+        """处理多个文档"""
         results = []
         total = len(file_paths)
         
@@ -419,11 +438,7 @@ class DocumentProcessor:
         return results
 
     def get_loaded_documents_info(self) -> List[Dict[str, str]]:
-        """获取已加载文档的信息列表
-        
-        Returns:
-            List[Dict[str, str]]: 包含文档信息的列表，每个文档包含 name 和 status
-        """
+        """获取已加载文档的信息列表"""
         docs_info = []
         for file_path, info in self.knowledge_base.items():
             docs_info.append({
@@ -433,28 +448,14 @@ class DocumentProcessor:
         return docs_info
 
     def get_document_preview(self, file_path: str) -> str:
-        """获取文档的预览内容
-        
-        Args:
-            file_path: 文档路径
-            
-        Returns:
-            str: 预览内容
-        """
+        """获取文档的预览内容"""
         normalized_path = os.path.normpath(file_path)
         if normalized_path in self.knowledge_base:
             return self.knowledge_base[normalized_path].get('preview', '暂无预览')
         return '文档未找到'
 
     def _read_preview_content(self, file_path: str) -> str:
-        """读取文档的预览内容
-        
-        Args:
-            file_path: 文档路径
-            
-        Returns:
-            str: 预览内容
-        """
+        """读取文档的预览内容"""
         try:
             content = self._read_file_with_encoding(file_path)
             if content:

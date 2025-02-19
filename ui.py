@@ -1,5 +1,6 @@
+import os  # 添加这行导入
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, messagebox
 from tkinter import filedialog
 from typing import Callable, List, Dict
 from threading import Thread
@@ -48,6 +49,10 @@ class AzentWriterUI:
         search_btn = ttk.Button(button_frame, text="查询", command=self.search_knowledge_base)
         search_btn.grid(row=0, column=3)
         
+        # 添加删除向量按钮
+        delete_vector_btn = ttk.Button(button_frame, text="删除向量", command=self.delete_vector)
+        delete_vector_btn.grid(row=0, column=4, padx=(5, 0))
+        
         # 创建进度条
         self.progress_var = tk.DoubleVar()
         self.progress_bar = ttk.Progressbar(main_frame, variable=self.progress_var, maximum=100)
@@ -57,18 +62,22 @@ class AzentWriterUI:
         preview_frame = ttk.LabelFrame(main_frame, text="预览区域", padding="5")
         preview_frame.grid(row=2, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         
-        # 添加知识库列表区域
+        # 修改知识库列表区域
         library_frame = ttk.LabelFrame(main_frame, text="已加载知识库", padding="5")
         library_frame.grid(row=3, column=0, sticky=(tk.W, tk.E), pady=5)
         
-        # 创建知识库列表文本框
-        self.library_text = tk.Text(library_frame, height=5, width=80)
-        library_scrollbar = ttk.Scrollbar(library_frame, orient=tk.VERTICAL, command=self.library_text.yview)
-        self.library_text.configure(yscrollcommand=library_scrollbar.set)
+        # 创建知识库列表框架
+        list_frame = ttk.Frame(library_frame)
+        list_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         
-        self.library_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        # 创建列表框
+        self.library_listbox = tk.Listbox(list_frame, height=5, width=80, selectmode=tk.MULTIPLE)
+        library_scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.library_listbox.yview)
+        self.library_listbox.configure(yscrollcommand=library_scrollbar.set)
+        
+        self.library_listbox.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         library_scrollbar.grid(row=0, column=1, sticky=(tk.N, tk.S))
-        library_frame.columnconfigure(0, weight=1)
+        list_frame.columnconfigure(0, weight=1)
         
         # 继续现有的布局配置
         main_frame.columnconfigure(0, weight=1)
@@ -161,11 +170,46 @@ class AzentWriterUI:
                 self.update_preview(str(e))
 
     def update_library_list(self, docs_info: List[Dict[str, any]]):
-        """更新知识库列表显示
-        
-        Args:
-            docs_info: 包含文档信息的列表
-        """
-        self.library_text.delete(1.0, tk.END)
+        """更新知识库列表显示"""
+        self.library_listbox.delete(0, tk.END)
         for doc in docs_info:
-            self.library_text.insert(tk.END, f"{doc['name']} - {doc['status']}\n")
+            self.library_listbox.insert(tk.END, f"{doc['name']} - {doc['status']}")
+    
+    def delete_vector(self):
+        """删除选中文档的向量数据"""
+        try:
+            # 获取选中的项目
+            selected_indices = self.library_listbox.curselection()
+            if not selected_indices:
+                tk.messagebox.showwarning("提示", "请先选择要删除向量的文档")
+                return
+            
+            # 获取选中的文件名
+            selected_items = [self.library_listbox.get(idx) for idx in selected_indices]
+            
+            # 显示确认对话框
+            if not tk.messagebox.askyesno("确认", 
+                f"确定要删除以下文档的向量数据吗？\n{chr(10).join(selected_items)}\n(原始文件将保留)"):
+                return
+            
+            # 获取文件路径并删除向量
+            deleted_indices = []  # 记录要删除的列表项索引
+            for idx, item in enumerate(selected_items):
+                if " - " in item:  # 文件名格式: "filename - status"
+                    filename = item.split(" - ")[0]
+                    # 查找完整路径
+                    for path in list(self.processor.knowledge_base.keys()):  # 使用list复制keys
+                        if os.path.basename(path) == filename:
+                            if self.processor.remove_vector_data(path):
+                                deleted_indices.append(selected_indices[idx])
+                                deleted = True
+                            break
+            
+            if deleted:
+                # 从列表框中删除对应项
+                for idx in reversed(deleted_indices):  # 从后向前删除
+                    self.library_listbox.delete(idx)
+                self.update_preview("文档及其向量数据已删除")
+                    
+        except Exception as e:
+            tk.messagebox.showerror("错误", f"删除向量数据失败: {str(e)}")
