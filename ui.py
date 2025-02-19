@@ -11,6 +11,12 @@ class AzentWriterUI:
         self.on_process_files = on_process_files
         self.processing = False
         
+        # 直接从 root 获取 processor
+        if hasattr(root, 'processor'):
+            self.processor = root.processor
+        else:
+            raise RuntimeError("无法获取文档处理器实例")
+        
         # 设置窗口大小和布局
         self.root.geometry('800x600')
         self.setup_ui()
@@ -92,21 +98,49 @@ class AzentWriterUI:
     
     def process_files(self):
         """触发文件处理"""
-        if not self.processing:
-            self.processing = True
-            self.progress_var.set(0)
-            Thread(target=self._process_files_thread).start()
-    
-    def _process_files_thread(self):
-        """在新线程中处理文件"""
-        def update_progress(progress: float, status: str):
-            self.progress_var.set(progress * 100)
-            self.update_preview(status)
+        if self.processing:
+            tk.messagebox.showwarning("提示", "文件正在处理中，请等待...")
+            return
+            
+        # 获取所有未处理的文件
+        files_to_process = []
+        for file_path, info in self.processor.knowledge_base.items():
+            if not info.get('processed', False):
+                files_to_process.append(file_path)
         
+        if not files_to_process:
+            self.update_preview("没有需要处理的文件")
+            return
+            
+        self.processing = True
+        self.progress_var.set(0)
+        
+        # 禁用按钮
+        for widget in self.root.winfo_children():
+            if isinstance(widget, ttk.Button):
+                widget.configure(state='disabled')
+                
+        # 启动处理线程
+        Thread(target=lambda: self._process_files_thread(files_to_process)).start()
+    
+    def _process_files_thread(self, files_to_process):
+        """在新线程中处理文件"""
         try:
-            self.on_process_files([], update_progress)
+            def update_progress(progress: float, status: str):
+                self.progress_var.set(progress)
+                self.update_preview(status)
+                
+            self.on_process_files(files_to_process, update_progress)
+            
+        except Exception as e:
+            self.update_preview(f"处理失败: {str(e)}")
+            
         finally:
             self.processing = False
+            # 恢复按钮状态
+            for widget in self.root.winfo_children():
+                if isinstance(widget, ttk.Button):
+                    widget.configure(state='normal')
     
     def update_preview(self, content: str):
         """更新预览区域的内容"""

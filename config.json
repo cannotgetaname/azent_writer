@@ -3,5 +3,17 @@
     "model": "paraphrase-multilingual-MiniLM-L12-v2",
     "knowledge_base_dir": "knowledge_base",
     "max_chunk_size": 512,
-    "supported_formats": [".txt"]
+    "min_chunk_size": 100,
+    "chunk_overlap": 50,
+    "supported_formats": [".txt", ".md"],
+    "encodings": ["utf-8", "gbk", "gb2312", "gb18030", "utf-16"],
+    "search_settings": {
+        "top_k": 5,
+        "min_score": 0.1
+    },
+    "ui": {
+        "window_size": "800x600",
+        "preview_height": 20,
+        "library_height": 5
+    }
 }
